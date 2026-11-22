@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Shortcut Termux:Widget untuk membuka GUI web OpenCode.
+# File ini harus berupa file biasa di dalam ~/.shortcuts (bukan symlink),
+# karena Termux:Widget menolak path kanonik di luar ~/.shortcuts.
+exec /data/data/com.termux/files/home/bin/sambungopencode "$@"

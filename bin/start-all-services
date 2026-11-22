@@ -1,0 +1,78 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# start-all-services — satu tempat menyalakan SEMUA service lokal
+# Dipanggil oleh Termux:Widget (FreeLLMAPI, sambungopencode) dan ~/.bashrc.
+# Semua proses pakai setsid agar tetap hidup walau sesi/widget ditutup.
+
+set -uo pipefail
+export PATH="/data/data/com.termux/files/usr/bin:$HOME/bin:$PATH"
+
+# Opsi: --open-dashboard akan membuka dashboard freellmapi di browser setelah semua siap
+OPEN_DASHBOARD=0
+for arg in "$@"; do
+  case "$arg" in
+    --open-dashboard) OPEN_DASHBOARD=1 ;;
+  esac
+done
+
+LOG_DIR="$HOME/.local/log/services"
+mkdir -p "$LOG_DIR"
+
+# --- Wake lock: tahan CPU saat layar mati / Doze ---
+if command -v termux-wake-lock >/dev/null 2>&1; then
+  termux-wake-lock
+fi
+
+# --- Helper: cek port aktif ---
+port_up() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$1/" 2>/dev/null; }
+
+# --- Helper: jalankan proses jika port belum aktif ---
+start_if_down() {
+  local port="$1" name="$2" logfile="$3"; shift 3
+  if port_up "$port"; then
+    echo "[skip] $name sudah jalan (port $port)"
+  else
+    setsid "$@" </dev/null >> "$logfile" 2>&1 &
+    echo "[start] $name di port $port (log: $logfile)"
+  fi
+}
+
+# 1) API Key Manager — port 3000 (proxy openrouter/groq/deepseek/gemini/together)
+start_if_down 3000 "Key Manager" "$LOG_DIR/keymanager.log" \
+  env PORT=3000 node "$HOME/bin/cli.js" --port=3000
+
+# 2) freellmapi server — port 3001 (proxy lokal OpenCode)
+FREELLM_DIR="$HOME/freellmapi/server"
+start_if_down 3001 "freellmapi server" "$LOG_DIR/freellmapi.log" \
+  env PORT=3001 HOST=127.0.0.1 \
+  "$HOME/freellmapi/node_modules/.bin/tsx" watch "$FREELLM_DIR/src/index.ts"
+
+# 3) freellmapi dashboard (Vite preview dari dist) — port 5173
+if [ -f "$HOME/freellmapi/client/dist/index.html" ]; then
+  start_if_down 5173 "freellmapi dashboard" "$LOG_DIR/freellmapi-dashboard.log" \
+    bash -c "cd '$HOME/freellmapi/client' && exec node '$HOME/freellmapi/node_modules/vite/bin/vite.js' preview --host 127.0.0.1 --port 5173 --strictPort"
+fi
+
+# 4) OpenCode Account Manager — port 8787
+ACCOUNT_MGR_DIR="$HOME/.config/opencode/tools/opencode-account-manager"
+if [ -f "$ACCOUNT_MGR_DIR/server.py" ]; then
+  start_if_down 8787 "Account Manager" "$LOG_DIR/account-manager.log" \
+    env PORT=8787 python3 "$ACCOUNT_MGR_DIR/server.py"
+fi
+
+# 5) OpenCode service (GUI web / TUI backend)
+if command -v opencode >/dev/null 2>&1; then
+  if [ -z "$(opencode service status 2>/dev/null | head -n 1 | tr -d '[:space:]')" ]; then
+    opencode service start >/dev/null 2>&1
+    echo "[start] OpenCode service"
+  else
+    echo "[skip] OpenCode service sudah jalan"
+  fi
+fi
+
+echo "[done] Semua service lokal siap."
+
+if [ "$OPEN_DASHBOARD" = "1" ]; then
+  if command -v termux-open-url >/dev/null 2>&1; then
+    termux-open-url "http://127.0.0.1:5173/" >/dev/null 2>&1 &
+  fi
+fi

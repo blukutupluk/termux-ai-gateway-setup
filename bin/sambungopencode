@@ -1,0 +1,126 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# sambungopencode - buka GUI web OpenCode di browser Android.
+#
+# Server tetap jalan di Termux (localhost). Script ini hanya:
+#   1. memastikan service OpenCode hidup,
+#   2. membuat link pairing sekali pakai (5 menit),
+#   3. membuka link itu di browser.
+#
+# Tidak pernah memakai --remote, jadi server tidak diekspos ke internet.
+
+set -uo pipefail
+
+# Tahan CPU tetap hidup saat layar mati (Android Doze).
+command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+# Pastikan SEMUA provider & service lokal aktif sebelum buka OpenCode
+# (Termux:Widget tidak membaca ~/.bashrc, jadi dipanggil eksplisit di sini).
+if [ -x "$HOME/bin/start-all-services" ]; then
+  "$HOME/bin/start-all-services" >/dev/null 2>&1
+fi
+
+ACTION="open"
+
+usage() {
+    cat <<'USAGE'
+sambungopencode - buka GUI web OpenCode di browser
+
+Pemakaian:
+  sambungopencode              buat link lalu buka di browser
+  sambungopencode --url        hanya cetak link (tidak buka browser)
+  sambungopencode --status     cek service OpenCode
+  sambungopencode --help       bantuan ini
+
+Catatan:
+  - Link berlaku 5 menit dan hanya sekali pakai.
+  - Server hanya listen di 127.0.0.1 (tidak bisa diakses HP lain).
+  - Opsi --remote sengaja ditolak.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --url|--print|--no-open) ACTION="url" ;;
+        --status)                ACTION="status" ;;
+        -h|--help)               usage; exit 0 ;;
+        --remote)
+            echo "[DITOLAK] --remote membuka server ke internet. Tidak dijalankan." >&2
+            exit 2
+            ;;
+        *)
+            echo "[ERROR] Opsi tidak dikenal: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if ! command -v opencode >/dev/null 2>&1; then
+    echo "[ERROR] opencode tidak ditemukan di PATH." >&2
+    exit 1
+fi
+
+service_url() {
+    opencode service status 2>/dev/null | head -n 1 | tr -d '[:space:]'
+}
+
+if [ "$ACTION" = "status" ]; then
+    u=$(service_url)
+    if [ -n "$u" ]; then
+        echo "Service : $u"
+        echo "Status  : jalan"
+    else
+        echo "Service : tidak berjalan"
+        echo "Status  : mati"
+        echo "Tip     : jalankan 'sambungopencode' untuk menyalakan + pairing."
+    fi
+    exit 0
+fi
+
+# Pastikan service hidup.
+if [ -z "$(service_url)" ]; then
+    echo "Service OpenCode belum jalan, menyalakan..."
+    opencode service start >/dev/null 2>&1
+    sleep 1
+    if [ -z "$(service_url)" ]; then
+        echo "[ERROR] Gagal menyalakan service. Coba: opencode service restart" >&2
+        exit 1
+    fi
+fi
+
+echo "Membuat link pairing (berlaku 5 menit, sekali pakai)..."
+out=$(timeout 25 opencode pair 2>&1)
+
+url=$(printf '%s' "$out" \
+    | grep -oE 'http://127\.0\.0\.1:[0-9]+/auth/connect/[A-Za-z0-9._~-]+' \
+    | head -n 1)
+
+if [ -z "$url" ]; then
+    echo "[ERROR] Tidak menemukan link pairing. Output opencode pair:" >&2
+    printf '%s\n' "$out" | sed 's/^/  /' >&2
+    exit 1
+fi
+
+printf '\nURL: %s\n\n' "$url"
+
+if [ "$ACTION" = "url" ]; then
+    exit 0
+fi
+
+if command -v termux-open-url >/dev/null 2>&1; then
+    if termux-open-url "$url" >/dev/null 2>&1; then
+        echo "Dibuka di browser. Kalau tidak muncul, salin URL di atas ke Chrome."
+        exit 0
+    fi
+fi
+
+if command -v am >/dev/null 2>&1; then
+    if am start -a android.intent.action.VIEW -d "$url" >/dev/null 2>&1; then
+        echo "Dibuka di browser."
+        exit 0
+    fi
+fi
+
+echo "Tidak bisa membuka browser otomatis. Salin URL di atas ke Chrome." >&2
+exit 0

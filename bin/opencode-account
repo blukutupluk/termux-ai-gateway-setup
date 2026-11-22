@@ -1,0 +1,8 @@
+#!/bin/sh
+# opencode-account — kelola akun OpenCode Console lewat CLI resmi opencode auth
+# Shebang /bin/sh dipakai karena /usr/bin/env tidak tersedia di Termux.
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+
+exec node "$ROOT/src/opencode-account-cli.js" "$@"

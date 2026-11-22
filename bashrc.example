@@ -1,0 +1,23 @@
+export GITHUB_PERSONAL_ACCESS_TOKEN="$(gh auth token 2>/dev/null)"
+export PATH="$HOME/bin:$PATH"
+
+# === Auto-start SEMUA service lokal (wake lock + freellmapi + keymanager + dashboard + account manager) ===
+# Satu script dipakai bersama ~/.bashrc dan Termux:Widget.
+if [ -x "$HOME/bin/start-all-services" ]; then
+  "$HOME/bin/start-all-services" >/dev/null 2>&1
+fi
+
+export OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY"
+
+# Saat membuka opencode: pastikan OpenRouter (free) siap
+opencode() {
+  # Tambahkan OpenRouter free-only jika key tersedia dan belum ada
+  if [ -n "${OPENROUTER_API_KEY:-}" ] && [ -f "$HOME/.config/opencode/tools/opencode-account-manager/setup-openrouter.sh" ]; then
+    if ! grep -q '"openrouter-free"' "$HOME/.config/opencode/opencode.json" 2>/dev/null; then
+      bash "$HOME/.config/opencode/tools/opencode-account-manager/setup-openrouter.sh" >/dev/null 2>&1
+    fi
+  fi
+  command opencode "$@"
+}
+export OPENROUTER_API_KEY='YOUR_OPENROUTER_API_KEY
+'

@@ -1,0 +1,10 @@
+.env
+.env.*
+service.json
+*.log
+data.json
+opencode.json
+.bashrc
+__pycache__/
+node_modules/
+.DS_Store

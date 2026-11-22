@@ -1,0 +1,42 @@
+#!/bin/sh
+# API Key Manager launcher for Termux
+# Usage: keymanager [start|stop|doctor|url]
+
+ROOT="${KEYMANAGER_ROOT:-$HOME}"
+LOG="$PREFIX/tmp/opencode/keymanager.log"
+PIDFILE="$PREFIX/tmp/opencode/keymanager.pid"
+PORT="${PORT:-3000}"
+
+case "${1:-start}" in
+  start)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "Server sudah jalan (PID $(cat "$PIDFILE"))"
+    else
+      cd "$ROOT" || exit 1
+      nohup node bin/cli.js --port="$PORT" > "$LOG" 2>&1 &
+      echo $! > "$PIDFILE"
+      sleep 2
+      cat "$LOG"
+    fi
+    ;;
+  stop)
+    if [ -f "$PIDFILE" ]; then
+      kill "$(cat "$PIDFILE")" 2>/dev/null && echo "Server dihentikan"
+      rm -f "$PIDFILE"
+    else
+      echo "Tidak ada server aktif"
+    fi
+    ;;
+  doctor)
+    cd "$ROOT" || exit 1
+    node bin/cli.js --doctor --port="$PORT"
+    ;;
+  url)
+    echo "HP   : http://127.0.0.1:$PORT"
+    IP=$(ifconfig wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}')
+    [ -n "$IP" ] && echo "LAN  : http://$IP:$PORT"
+    ;;
+  *)
+    echo "Usage: keymanager [start|stop|doctor|url]"
+    ;;
+esac

@@ -1,0 +1,216 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# freellmapi-launcher - pastikan FreeLLMAPI hidup lalu buka dashboard.
+#
+# Dipakai oleh shortcut Termux:Widget ~/.shortcuts/FreeLLMAPI.
+# Server tetap listen di 127.0.0.1; script ini tidak membuka jaringan.
+
+set -uo pipefail
+umask 077
+
+# Termux:Widget bisa berjalan dengan PATH minimal; pastikan binary Termux tersedia.
+export PATH="/data/data/com.termux/files/usr/bin:$PATH"
+
+APP_DIR="$HOME/freellmapi"
+LOG="$HOME/freellmapi.log"
+LAUNCH_LOG="$HOME/freellmapi-launcher.log"
+DASH_URL="http://127.0.0.1:5173"
+API_URL="http://127.0.0.1:3001/v1/models"
+WAIT_SECONDS="${FREELLMAPI_WAIT_SECONDS:-60}"
+ACTION="${1:-start}"
+
+usage() {
+    cat <<'USAGE'
+freellmapi-launcher - kontrol lokal FreeLLMAPI
+
+Pemakaian:
+  freellmapi-launcher            pastikan hidup, lalu buka dashboard
+  freellmapi-launcher start      sama seperti di atas
+  freellmapi-launcher open       buka dashboard (harus sudah hidup)
+  freellmapi-launcher status     cek dashboard, API, dan proses
+  freellmapi-launcher stop       hentikan proses FreeLLMAPI
+  freellmapi-launcher --help     bantuan ini
+
+Catatan:
+  - Hanya mengubah proses FreeLLMAPI, bukan proses lain.
+  - Dashboard: http://127.0.0.1:5173
+  - Log server: ~/freellmapi.log
+USAGE
+}
+
+log() {
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LAUNCH_LOG"
+}
+
+say() {
+    printf '%s\n' "$*"
+    log "$*"
+}
+
+dashboard_ok() {
+    curl -fsS --max-time 2 "$DASH_URL" 2>/dev/null | grep -q 'FreeLLMAPI'
+}
+
+dashboard_code() {
+    curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$DASH_URL" 2>/dev/null || true
+}
+
+api_code() {
+    curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$API_URL" 2>/dev/null || true
+}
+
+is_running() {
+    pgrep -f "$APP_DIR/node_modules/.bin/concurrently" >/dev/null 2>&1
+}
+
+open_dashboard() {
+    # termux-open-url mendukung argumen kedua berupa package Chrome.
+    if command -v termux-open-url >/dev/null 2>&1 \
+        && termux-open-url "$DASH_URL" com.android.chrome >/dev/null 2>&1; then
+        say "Dashboard dibuka di Chrome."
+        return 0
+    fi
+
+    if command -v termux-open-url >/dev/null 2>&1 \
+        && termux-open-url "$DASH_URL" >/dev/null 2>&1; then
+        say "Dashboard dibuka di browser default."
+        return 0
+    fi
+
+    if command -v am >/dev/null 2>&1 \
+        && am start -a android.intent.action.VIEW -d "$DASH_URL" >/dev/null 2>&1; then
+        say "Dashboard dibuka lewat Android intent."
+        return 0
+    fi
+
+    say "Gagal membuka browser. Buka manual: $DASH_URL"
+    return 1
+}
+
+start_server() {
+    if [ ! -d "$APP_DIR" ]; then
+        say "Folder FreeLLMAPI tidak ditemukan: $APP_DIR"
+        return 1
+    fi
+    if ! command -v npm >/dev/null 2>&1; then
+        say "npm tidak ditemukan di PATH."
+        return 1
+    fi
+
+    command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
+
+    # Rotasi log sederhana supaya tidak tumbuh tanpa batas.
+    if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+        mv -f "$LOG" "$LOG.1"
+    fi
+
+    say "Menyalakan FreeLLMAPI..."
+    (
+        cd "$APP_DIR" || exit 1
+        exec setsid nohup npm run dev >>"$LOG" 2>&1 </dev/null
+    ) &
+    log "Perintah start dijalankan."
+}
+
+wait_for_dashboard() {
+    local i
+    for ((i = 1; i <= WAIT_SECONDS; i++)); do
+        if dashboard_ok; then
+            return 0
+        fi
+
+        # Beri waktu beberapa detik sebelum menyimpulkan proses gagal start.
+        if [ "$i" -gt 10 ] && ! is_running; then
+            say "Proses dev berhenti saat startup."
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+ensure_and_open() {
+    if dashboard_ok; then
+        say "FreeLLMAPI sudah jalan."
+        open_dashboard
+        return $?
+    fi
+
+    if is_running; then
+        say "Proses FreeLLMAPI sudah jalan; menunggu dashboard..."
+    else
+        start_server || return 1
+    fi
+
+    if wait_for_dashboard; then
+        say "Dashboard siap: $DASH_URL"
+        open_dashboard
+        return $?
+    fi
+
+    say "Dashboard belum siap setelah ${WAIT_SECONDS} detik. Cek log: $LOG"
+    tail -n 20 "$LOG" >>"$LAUNCH_LOG" 2>/dev/null || true
+    return 1
+}
+
+show_status() {
+    local d a
+    d="$(dashboard_code)"
+    a="$(api_code)"
+
+    printf 'Dashboard : %s (%s)\n' "${d:-000}" "$DASH_URL"
+    printf 'API       : %s (%s)\n' "${a:-000}" "$API_URL"
+    if is_running; then
+        printf 'Proses    : jalan\n'
+    else
+        printf 'Proses    : tidak jalan\n'
+    fi
+}
+
+stop_server() {
+    local found=0 pattern i
+    for pattern in \
+        "$APP_DIR/node_modules/.bin/concurrently" \
+        "$APP_DIR/node_modules/.bin/tsx" \
+        "$APP_DIR/node_modules/.bin/vite" \
+        "$APP_DIR/node_modules/tsx/dist"; do
+        if pgrep -f "$pattern" >/dev/null 2>&1; then
+            pkill -TERM -f "$pattern" 2>/dev/null && found=1
+        fi
+    done
+
+    if [ "$found" -eq 0 ]; then
+        say "FreeLLMAPI tidak sedang berjalan."
+        return 0
+    fi
+
+    for ((i = 1; i <= 20; i++)); do
+        if ! is_running && [ "$(dashboard_code)" != "200" ]; then
+            say "FreeLLMAPI dihentikan."
+            return 0
+        fi
+        sleep 1
+    done
+
+    say "Sebagian proses masih berjalan. Cek: ps -ef | grep freellmapi"
+    return 1
+}
+
+case "$ACTION" in
+    start) ensure_and_open ;;
+    open)
+        if dashboard_ok; then
+            open_dashboard
+        else
+            say "Dashboard belum siap. Jalankan tanpa argumen untuk menyalakan."
+            exit 1
+        fi
+        ;;
+    status) show_status ;;
+    stop) stop_server ;;
+    -h | --help | help) usage ;;
+    *)
+        printf 'Opsi tidak dikenal: %s\n\n' "$ACTION" >&2
+        usage >&2
+        exit 2
+        ;;
+esac
