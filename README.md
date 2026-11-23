@@ -69,6 +69,18 @@ Cocok untuk kamu yang:
 
 ---
 
+## 📸 Tampilan Aplikasi
+
+Semua service lokal aktif — cek kesehatan sekali lihat.
+
+<div align="center">
+
+<img src="docs/screenshots/sys-status.png" alt="Status Service" width="720">
+
+</div>
+
+---
+
 ## ⚙️ Cara Kerja
 
 ```
